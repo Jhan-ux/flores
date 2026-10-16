@@ -1654,11 +1654,19 @@ export default function LotusGarden() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.minDistance = 2.0;
-    controls.maxDistance = 25.0;
+    controls.enableZoom = true;
+    controls.zoomSpeed = 1.1;
+    controls.minDistance = 1.0;
+    controls.maxDistance = 35.0;
+    controls.enableRotate = true;
+    controls.rotateSpeed = 0.85;
+    controls.enablePan = true;
+    controls.panSpeed = 0.8;
     controls.maxPolarAngle = Math.PI / 2 + 0.02;
     controls.target.set(0, 1.8, 0);
     controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+
+    const clock = new THREE.Clock();
 
     const textures = {
       petal: createLotusPetalTexture(),
@@ -1691,8 +1699,52 @@ export default function LotusGarden() {
     let currentFlowers = [];
     let currentPads = [];
 
-    let targetCameraPos = camera.position.clone();
-    let targetCameraLook = controls.target.clone();
+    let currentPreset = scenePreset;
+    let isTransitioningCamera = false;
+    let cameraTransitionStartTime = 0;
+    const cameraTransitionDuration = 1.0; // seconds
+    const startCamPos = new THREE.Vector3();
+    const startCamTarget = new THREE.Vector3();
+    const destCamPos = new THREE.Vector3();
+    const destCamTarget = new THREE.Vector3();
+    let hasInitializedCamera = false;
+
+    function transitionCamera(newPos, newLook) {
+      if (!hasInitializedCamera) {
+        camera.position.copy(newPos);
+        controls.target.copy(newLook);
+        controls.update();
+        hasInitializedCamera = true;
+        return;
+      }
+      startCamPos.copy(camera.position);
+      startCamTarget.copy(controls.target);
+      destCamPos.copy(newPos);
+      destCamTarget.copy(newLook);
+      cameraTransitionStartTime = clock.getElapsedTime();
+      isTransitioningCamera = true;
+    }
+
+    // Immediately release camera control to user upon any touch/pointer interaction
+    controls.addEventListener('start', () => {
+      isTransitioningCamera = false;
+    });
+
+    function resetCameraToPreset() {
+      const isPortrait = window.innerWidth < window.innerHeight;
+      let look = new THREE.Vector3(0, 1.8, 0);
+      let pos = isPortrait ? new THREE.Vector3(0, 3.8, 7.2) : new THREE.Vector3(0, 3.2, 5.8);
+
+      if (currentPreset === 'trio') {
+        look.set(0, 1.7, 0.5);
+        pos = isPortrait ? new THREE.Vector3(0, 5.2, 10.8) : new THREE.Vector3(0, 4.2, 8.2);
+      } else if (currentPreset === 'pond') {
+        look.set(0, 1.5, 0);
+        pos = isPortrait ? new THREE.Vector3(0, 7.8, 15.6) : new THREE.Vector3(0, 6.2, 11.8);
+      }
+
+      transitionCamera(pos, look);
+    }
 
     // -------------------------------------------------------------
     // SCENE PRESETS (WIDE SEPARATION FOR MULTIPLE FLOWERS)
@@ -1707,6 +1759,7 @@ export default function LotusGarden() {
 
     function setupScene(preset) {
       clearCurrentScene();
+      currentPreset = preset;
       const isPortrait = window.innerWidth < window.innerHeight;
 
       if (preset === 'solo') {
@@ -1723,12 +1776,9 @@ export default function LotusGarden() {
         flowersGroup.add(pad1.group, pad2.group, pad3.group);
         currentPads.push(pad1, pad2, pad3);
 
-        targetCameraLook.set(0, 1.8, 0);
-        if (isPortrait) {
-          targetCameraPos.set(0, 3.8, 7.2);
-        } else {
-          targetCameraPos.set(0, 3.2, 5.8);
-        }
+        const look = new THREE.Vector3(0, 1.8, 0);
+        const pos = isPortrait ? new THREE.Vector3(0, 3.8, 7.2) : new THREE.Vector3(0, 3.2, 5.8);
+        transitionCamera(pos, look);
       } else if (preset === 'trio') {
         // Generous spatial separation so petals NEVER touch!
         const f1 = new LotusFlower(textures, sound, {
@@ -1769,12 +1819,9 @@ export default function LotusGarden() {
           currentPads.push(pad);
         });
 
-        targetCameraLook.set(0, 1.7, 0.5);
-        if (isPortrait) {
-          targetCameraPos.set(0, 5.2, 10.8);
-        } else {
-          targetCameraPos.set(0, 4.2, 8.2);
-        }
+        const look = new THREE.Vector3(0, 1.7, 0.5);
+        const pos = isPortrait ? new THREE.Vector3(0, 5.2, 10.8) : new THREE.Vector3(0, 4.2, 8.2);
+        transitionCamera(pos, look);
       } else if (preset === 'pond') {
         // Expansive sanctuary with 6 well-spaced flowers across the pond
         const positions = [
@@ -1812,12 +1859,9 @@ export default function LotusGarden() {
           currentPads.push(pad);
         });
 
-        targetCameraLook.set(0, 1.5, 0);
-        if (isPortrait) {
-          targetCameraPos.set(0, 7.8, 15.6);
-        } else {
-          targetCameraPos.set(0, 6.2, 11.8);
-        }
+        const look = new THREE.Vector3(0, 1.5, 0);
+        const pos = isPortrait ? new THREE.Vector3(0, 7.8, 15.6) : new THREE.Vector3(0, 6.2, 11.8);
+        transitionCamera(pos, look);
       }
     }
 
@@ -1878,7 +1922,6 @@ export default function LotusGarden() {
 
     // Animation Loop
     let animationFrameId;
-    const clock = new THREE.Clock();
     let autoBloomTime = 0;
 
     const animate = () => {
@@ -1887,8 +1930,21 @@ export default function LotusGarden() {
       const delta = Math.min(clock.getDelta(), 0.1);
       const time = clock.getElapsedTime();
 
-      camera.position.lerp(targetCameraPos, 2.5 * delta);
-      controls.target.lerp(targetCameraLook, 2.5 * delta);
+      if (isTransitioningCamera) {
+        const progress = (time - cameraTransitionStartTime) / cameraTransitionDuration;
+        if (progress >= 1.0) {
+          camera.position.copy(destCamPos);
+          controls.target.copy(destCamTarget);
+          isTransitioningCamera = false;
+        } else {
+          // Smooth easeInOutCubic
+          const ease = progress < 0.5
+            ? 4 * progress * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+          camera.position.lerpVectors(startCamPos, destCamPos, ease);
+          controls.target.lerpVectors(startCamTarget, destCamTarget, ease);
+        }
+      }
 
       // Auto-bloom or manual bloom
       if (sceneControllerRef.current?.isAutoBloom) {
@@ -1946,6 +2002,7 @@ export default function LotusGarden() {
       },
       resetAllPetals: () => {
         currentFlowers.forEach((fl) => fl.resetAllPetals(scene));
+        resetCameraToPreset();
       },
       setTimeMode: (mode) => {
         envManager.setMode(mode);
